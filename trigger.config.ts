@@ -4,7 +4,8 @@ import { pythonExtension } from "@trigger.dev/python/extension";
 import { defineConfig, timeout } from "@trigger.dev/sdk";
 
 export default defineConfig({
-  project: "proj_plmsfqvqunboixacjjus",
+  // self-host: env-driven project ref so operators deploy to their own Trigger.dev project
+  project: process.env.TRIGGER_PROJECT_REF ?? "proj_plmsfqvqunboixacjjus",
   dirs: ["./lib/trigger", "./ee/**/lib/trigger"],
   maxDuration: timeout.None, // no max duration
   retries: {

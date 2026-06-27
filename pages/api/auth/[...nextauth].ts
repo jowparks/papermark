@@ -44,6 +44,8 @@ const getAuthOptions = (req: NextApiRequest): NextAuthOptions => {
           return false;
         }
 
+        // disabled: saml sso enforcement (no recourse once saml button is gone)
+        /*
         // ─── SSO Enforcement ───
         // If user is NOT signing in via SAML, check if their domain requires SSO
         if (
@@ -60,6 +62,7 @@ const getAuthOptions = (req: NextApiRequest): NextAuthOptions => {
             throw error;
           }
         }
+        */
 
         // ─── SAML user → email domain validation ───
         if (

@@ -45,8 +45,10 @@ export const sendEmail = async ({
   const html = await render(react);
   const plainText = toPlainText(html);
 
+  // self-host: prefer operator's Resend-verified from-address; falls back to cloud defaults when unset
   const fromAddress =
     from ??
+    process.env.RESEND_FROM_EMAIL ??
     (marketing
       ? "Marc from Papermark <marc@updates.papermark.com>"
       : system

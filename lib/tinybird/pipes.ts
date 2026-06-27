@@ -4,7 +4,14 @@ import { z } from "zod";
 import { VIDEO_EVENT_TYPES } from "../constants";
 import { WEBHOOK_TRIGGERS } from "../webhook/constants";
 
-const tb = new Tinybird({ token: process.env.TINYBIRD_TOKEN! });
+// self-host: honor the workspace region. zod-bird defaults baseUrl to
+// https://api.tinybird.co; non-default regions (e.g. us-east-aws ->
+// https://api.us-east.aws.tinybird.co) 403 without this. Same TINYBIRD_HOST var
+// the provision-tinybird.sh CLI push uses.
+const tb = new Tinybird({
+  token: process.env.TINYBIRD_TOKEN!,
+  ...(process.env.TINYBIRD_HOST ? { baseUrl: process.env.TINYBIRD_HOST } : {}),
+});
 
 export const getTotalAvgPageDuration = tb.buildPipe({
   pipe: "get_total_average_page_duration__v5",

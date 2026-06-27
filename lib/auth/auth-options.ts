@@ -1,21 +1,25 @@
 import { isSamlEnforcedForEmailDomain } from "@/lib/api/teams/is-saml-enforced-for-email-domain";
 import { PrismaAdapter } from "@next-auth/prisma-adapter";
-import PasskeyProvider from "@teamhanko/passkeys-next-auth-provider";
+// import PasskeyProvider from "@teamhanko/passkeys-next-auth-provider"; // disabled: passkey login
 import { type NextAuthOptions } from "next-auth";
-import CredentialsProvider from "next-auth/providers/credentials";
+// import CredentialsProvider from "next-auth/providers/credentials"; // disabled: saml-idp login
 import EmailProvider from "next-auth/providers/email";
 import GoogleProvider from "next-auth/providers/google";
-import LinkedInProvider from "next-auth/providers/linkedin";
+// import LinkedInProvider from "next-auth/providers/linkedin"; // disabled: linkedin login
 
 import { identifyUser, trackAnalytics } from "@/lib/analytics";
 import { qstash } from "@/lib/cron";
 import { sendVerificationRequestEmail } from "@/lib/emails/send-verification-request";
-import hanko from "@/lib/hanko";
-import { jackson } from "@/lib/jackson";
+// import hanko from "@/lib/hanko"; // disabled: passkey login
+// import { jackson } from "@/lib/jackson"; // disabled: saml-idp login
 import prisma from "@/lib/prisma";
 import { CustomUser } from "@/lib/types";
 
 const VERCEL_DEPLOYMENT = !!process.env.VERCEL_URL;
+// Must equal next-auth getToken()'s secureCookie default, or the cookie is
+// written and read under different names and the session never sticks.
+const useSecureCookies =
+  process.env.NEXTAUTH_URL?.startsWith("https://") ?? !!process.env.VERCEL;
 
 function getMainDomainUrl(): string {
   if (process.env.NODE_ENV === "development") {
@@ -34,26 +38,27 @@ export const authOptions: NextAuthOptions = {
       clientSecret: process.env.GOOGLE_CLIENT_SECRET as string,
       allowDangerousEmailAccountLinking: true,
     }),
-    LinkedInProvider({
-      clientId: process.env.LINKEDIN_CLIENT_ID as string,
-      clientSecret: process.env.LINKEDIN_CLIENT_SECRET as string,
-      authorization: {
-        params: { scope: "openid profile email" },
-      },
-      issuer: "https://www.linkedin.com/oauth",
-      jwks_endpoint: "https://www.linkedin.com/oauth/openid/jwks",
-      profile(profile, tokens) {
-        const defaultImage =
-          "https://cdn-icons-png.flaticon.com/512/174/174857.png";
-        return {
-          id: profile.sub,
-          name: profile.name,
-          email: profile.email,
-          image: profile.picture ?? defaultImage,
-        };
-      },
-      allowDangerousEmailAccountLinking: true,
-    }),
+    // disabled: linkedin login
+    // LinkedInProvider({
+    //   clientId: process.env.LINKEDIN_CLIENT_ID as string,
+    //   clientSecret: process.env.LINKEDIN_CLIENT_SECRET as string,
+    //   authorization: {
+    //     params: { scope: "openid profile email" },
+    //   },
+    //   issuer: "https://www.linkedin.com/oauth",
+    //   jwks_endpoint: "https://www.linkedin.com/oauth/openid/jwks",
+    //   profile(profile, tokens) {
+    //     const defaultImage =
+    //       "https://cdn-icons-png.flaticon.com/512/174/174857.png";
+    //     return {
+    //       id: profile.sub,
+    //       name: profile.name,
+    //       email: profile.email,
+    //       image: profile.picture ?? defaultImage,
+    //     };
+    //   },
+    //   allowDangerousEmailAccountLinking: true,
+    // }),
     EmailProvider({
       async sendVerificationRequest({ identifier, url }) {
         const hasValidNextAuthUrl = !!process.env.NEXTAUTH_URL;
@@ -84,14 +89,17 @@ export const authOptions: NextAuthOptions = {
         }
       },
     }),
-    PasskeyProvider({
-      tenant: hanko,
-      async authorize({ userId }) {
-        const user = await prisma.user.findUnique({ where: { id: userId } });
-        if (!user) return null;
-        return user;
-      },
-    }),
+    // disabled: passkey login
+    // PasskeyProvider({
+    //   tenant: hanko,
+    //   async authorize({ userId }) {
+    //     const user = await prisma.user.findUnique({ where: { id: userId } });
+    //     if (!user) return null;
+    //     return user;
+    //   },
+    // }),
+    // disabled: saml sso login (sp-initiated)
+    /*
     {
       id: "saml",
       name: "BoxyHQ SAML",
@@ -177,18 +185,19 @@ export const authOptions: NextAuthOptions = {
         }
       },
     }),
+    */
   ],
   adapter: PrismaAdapter(prisma),
   session: { strategy: "jwt" },
   cookies: {
     sessionToken: {
-      name: `${VERCEL_DEPLOYMENT ? "__Secure-" : ""}next-auth.session-token`,
+      name: `${useSecureCookies ? "__Secure-" : ""}next-auth.session-token`,
       options: {
         httpOnly: true,
         sameSite: "lax",
         path: "/",
         domain: VERCEL_DEPLOYMENT ? ".papermark.com" : undefined,
-        secure: VERCEL_DEPLOYMENT,
+        secure: useSecureCookies,
       },
     },
   },

@@ -23,6 +23,24 @@ export const rateLimiters = {
     enableProtection: true,
     analytics: true,
   }),
+
+  // self-host: bulkLinkImport + domainVerification were referenced by committed
+  // consumers but missing from this committed ratelimit.ts; added to mirror auth/billing.
+  bulkLinkImport: new Ratelimit({
+    redis,
+    limiter: Ratelimit.slidingWindow(10, "20 m"),
+    prefix: "rl:bulk-link-import",
+    enableProtection: true,
+    analytics: true,
+  }),
+
+  domainVerification: new Ratelimit({
+    redis,
+    limiter: Ratelimit.slidingWindow(10, "20 m"),
+    prefix: "rl:domain-verification",
+    enableProtection: true,
+    analytics: true,
+  }),
 };
 
 /**
