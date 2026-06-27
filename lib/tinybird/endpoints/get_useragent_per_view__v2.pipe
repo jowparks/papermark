@@ -1,0 +1,23 @@
+DESCRIPTION >
+    Legacy user-agent lookup fallback. Resolves user-agent fields from
+    page_views__v3 (by documentId + viewId) when the pm_click_events-based
+    v3 endpoint returns no rows.
+
+NODE endpoint
+SQL >
+    %
+    SELECT
+        country,
+        city,
+        browser,
+        os,
+        device
+    FROM
+        page_views__v3
+    WHERE
+        documentId = {{ String(documentId, required=True) }}
+        AND viewId = {{ String(viewId, required=True) }}
+        AND time >= {{ Int64(since, required=True) }}
+    LIMIT 1
+
+TYPE ENDPOINT

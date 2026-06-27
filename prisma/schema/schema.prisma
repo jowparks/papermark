@@ -8,6 +8,10 @@ datasource db {
 generator client {
   provider        = "prisma-client-js"
   previewFeatures = ["relationJoins", "prismaSchemaFolder"]
+  // self-host: bundle engines for the bookworm runtime's native OpenSSL 3.0
+  // (deps stage has no openssl so prisma would otherwise only emit the 1.1.x
+  // fallback engine, which fails to load once the runner installs openssl 3.0).
+  binaryTargets   = ["native", "linux-arm64-openssl-3.0.x", "debian-openssl-3.0.x"]
 }
 
 model Account {

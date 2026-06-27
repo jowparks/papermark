@@ -1,0 +1,109 @@
+# Papermark self-host stack. `docker compose up` orchestrates one-time
+# bootstrap via Compose-native one-shot init services, each gated by
+# depends_on: { condition: service_completed_successfully } and made
+# idempotent (gen-secrets: file check; migrate: prisma deploy; tinybird /
+# trigger: sentinel files in the `state` volume).
+#
+# NO postgres service / pgdata volume — Postgres is managed (Neon).
+# NEXT_PUBLIC_* are baked into the client bundle at build time, so they are
+# passed to the `app` build via build.args (changing them => `docker compose build`).
+
+services:
+  # One-shot: generate internal secret trio into the `secrets` volume.
+  secrets-init:
+    build:
+      context: .
+      target: tooling
+    image: papermark-tooling
+    entrypoint: ["/bin/sh", "docker/gen-secrets.sh"]
+    volumes:
+      - secrets:/secrets
+
+  # One-shot (every boot, idempotent): apply Prisma schema to managed Neon.
+  migrate:
+    build:
+      context: .
+      target: tooling
+    image: papermark-tooling
+    entrypoint: ["/bin/sh", "docker/migrate-entrypoint.sh"]
+    env_file: [.env]
+    depends_on:
+      secrets-init:
+        condition: service_completed_successfully
+
+  # One-shot (sentinel): push Tinybird datasources + endpoints.
+  provision-tinybird:
+    image: python:3.12-slim
+    entrypoint: ["/bin/sh", "/docker/provision-tinybird.sh"]
+    env_file: [.env]
+    volumes:
+      - state:/state
+      - ./lib/tinybird:/work/lib/tinybird:ro
+      - ./docker:/docker:ro
+
+  # One-shot (sentinel): deploy Trigger.dev tasks to Trigger.dev Cloud.
+  provision-trigger:
+    build:
+      context: .
+      target: tooling
+    image: papermark-tooling
+    entrypoint: ["/bin/sh", "docker/provision-trigger.sh"]
+    env_file: [.env]
+    volumes:
+      - state:/state
+
+  # The Papermark web app (lean Next.js standalone runtime).
+  app:
+    build:
+      context: .
+      target: runner
+      args:
+        NEXT_PUBLIC_BASE_URL: "${NEXT_PUBLIC_BASE_URL}"
+        NEXT_PUBLIC_MARKETING_URL: "${NEXT_PUBLIC_MARKETING_URL}"
+        NEXT_PUBLIC_APP_BASE_HOST: "${NEXT_PUBLIC_APP_BASE_HOST}"
+        NEXT_PUBLIC_UPLOAD_TRANSPORT: "${NEXT_PUBLIC_UPLOAD_TRANSPORT}"
+    image: papermark-runner
+    ports:
+      - "3000:3000"
+    env_file: [.env]
+    volumes:
+      - secrets:/secrets:ro
+    depends_on:
+      secrets-init:
+        condition: service_completed_successfully
+      migrate:
+        condition: service_completed_successfully
+      provision-tinybird:
+        condition: service_completed_successfully
+      provision-trigger:
+        condition: service_completed_successfully
+    healthcheck:
+      # bookworm-slim has no wget/curl, but node is present in the runner image.
+      test:
+        [
+          "CMD",
+          "node",
+          "-e",
+          "fetch('http://localhost:3000/api/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))",
+        ]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 40s
+
+  # Cloudflare Tunnel — publishes `app` at your public hostname with no exposed
+  # host port. The connector token (TUNNEL_TOKEN in .env) identifies your named
+  # tunnel; ingress (public hostname -> http://app:3000) is set once in the
+  # Cloudflare Zero Trust dashboard. See DOCKER.md §10. Remove this service if you
+  # front the app with your own reverse proxy instead.
+  cloudflared:
+    image: cloudflare/cloudflared:latest
+    restart: unless-stopped
+    command: tunnel --no-autoupdate run --token ${TUNNEL_TOKEN}
+    depends_on:
+      app:
+        condition: service_healthy
+
+volumes:
+  secrets:
+  state:

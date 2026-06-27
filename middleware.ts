@@ -19,12 +19,23 @@ function isAnalyticsPath(path: string) {
   return pattern.test(path);
 }
 
+// ponytail: self-host app host, derived from NEXT_PUBLIC_BASE_URL
+let APP_HOST: string | undefined;
+try {
+  APP_HOST = process.env.NEXT_PUBLIC_BASE_URL
+    ? new URL(process.env.NEXT_PUBLIC_BASE_URL).host
+    : undefined;
+} catch {
+  APP_HOST = undefined;
+}
+
 function isCustomDomain(host: string) {
   return (
     (process.env.NODE_ENV === "development" &&
       (host?.includes(".local") || host?.includes("papermark.dev"))) ||
     (process.env.NODE_ENV !== "development" &&
       !(
+        (APP_HOST && host === APP_HOST) ||
         host?.includes("localhost") ||
         host?.includes("papermark.io") ||
         host?.includes("papermark.com") ||

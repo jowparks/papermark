@@ -5,9 +5,9 @@ import { useRouter, useSearchParams } from "next/navigation";
 
 import { useState } from "react";
 
-import { SSOLogin } from "@/ee/features/security/sso";
-import { signInWithPasskey } from "@teamhanko/passkeys-next-auth-provider/client";
-import { AlertCircle } from "lucide-react";
+// import { SSOLogin } from "@/ee/features/security/sso"; // disabled: saml sso login
+// import { signInWithPasskey } from "@teamhanko/passkeys-next-auth-provider/client"; // disabled: passkey login
+// import { AlertCircle } from "lucide-react"; // disabled: saml sso alert
 import { signIn } from "next-auth/react";
 import { toast } from "sonner";
 import { z } from "zod";
@@ -16,8 +16,8 @@ import { cn } from "@/lib/utils";
 
 import { LastUsed, useLastUsed } from "@/components/hooks/useLastUsed";
 import Google from "@/components/shared/icons/google";
-import LinkedIn from "@/components/shared/icons/linkedin";
-import Passkey from "@/components/shared/icons/passkey";
+// import LinkedIn from "@/components/shared/icons/linkedin"; // disabled: linkedin login
+// import Passkey from "@/components/shared/icons/passkey"; // disabled: passkey login
 import { LogoCloud } from "@/components/shared/logo-cloud";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -27,11 +27,12 @@ export default function Login() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const next = searchParams?.get("next") ?? undefined;
-  const authError = searchParams?.get("error");
-  const isSSORequired = authError === "require-saml-sso";
+  // disabled: saml sso login
+  // const authError = searchParams?.get("error");
+  // const isSSORequired = authError === "require-saml-sso";
 
   const [lastUsed, setLastUsed] = useLastUsed();
-  const authMethods = ["google", "email", "linkedin", "passkey"] as const;
+  const authMethods = ["google", "email"] as const;
   type AuthMethod = (typeof authMethods)[number];
   const [clickedMethod, setClickedMethod] = useState<AuthMethod | undefined>(
     undefined,
@@ -72,6 +73,7 @@ export default function Login() {
               Share documents. Not attachments.
             </h3>
           </div>
+          {/* disabled: saml sso alert
           {isSSORequired && (
             <div className="mx-4 mb-2 flex items-start gap-3 rounded-[4px] border border-orange-200 bg-orange-50 px-4 py-3 sm:mx-12">
               <AlertCircle className="mt-0.5 h-5 w-5 flex-shrink-0 text-orange-600" />
@@ -86,6 +88,7 @@ export default function Login() {
               </div>
             </div>
           )}
+          */}
           <form
             className="flex flex-col gap-4 px-4 pt-4 sm:px-12"
             onSubmit={(e) => {
@@ -181,6 +184,7 @@ export default function Login() {
                 )}
               </Button>
             </div>
+            {/* disabled: linkedin, passkey, saml sso login methods
             <div className="relative">
               <Button
                 onClick={() => {
@@ -227,6 +231,7 @@ export default function Login() {
             <div className="relative">
               <SSOLogin autoExpand={isSSORequired} />
             </div>
+            */}
           </div>
           <p className="mt-10 w-full max-w-md px-4 text-xs text-muted-foreground sm:px-12">
             By continuing, you agree to Papermark&apos;s{" "}
