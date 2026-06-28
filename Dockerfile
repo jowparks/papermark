@@ -36,10 +36,14 @@ ARG NEXT_PUBLIC_BASE_URL
 ARG NEXT_PUBLIC_MARKETING_URL
 ARG NEXT_PUBLIC_APP_BASE_HOST
 ARG NEXT_PUBLIC_UPLOAD_TRANSPORT
+ARG NEXT_PUBLIC_SIGNING_HOST
 ENV NEXT_PUBLIC_BASE_URL=${NEXT_PUBLIC_BASE_URL}
 ENV NEXT_PUBLIC_MARKETING_URL=${NEXT_PUBLIC_MARKETING_URL}
 ENV NEXT_PUBLIC_APP_BASE_HOST=${NEXT_PUBLIC_APP_BASE_HOST}
 ENV NEXT_PUBLIC_UPLOAD_TRANSPORT=${NEXT_PUBLIC_UPLOAD_TRANSPORT}
+# Documenso URL for embedded signing. NEXT_PUBLIC_ -> inlined at build time even
+# in server-only lib/signing/client.ts; empty falls back to app.documenso.com.
+ENV NEXT_PUBLIC_SIGNING_HOST=${NEXT_PUBLIC_SIGNING_HOST}
 # Required: next.config.mjs header rule does a `host` match on this var and
 # Next fails the build if it is undefined. Reserved .invalid host never matches
 # a real Host, so the (unused) webhook feature stays effectively off.
