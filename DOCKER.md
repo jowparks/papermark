@@ -149,10 +149,16 @@ NEXT_PUBLIC_BASE_URL
 NEXTAUTH_URL
 INTERNAL_API_KEY                  # SAME value as in .env
 REVALIDATE_TOKEN                  # SAME value as in .env
+SIGNING_API_KEY                   # only if using embedded signing (§12)
+NEXT_PUBLIC_SIGNING_HOST          # only if using embedded signing (§12)
 ```
 
 The worker must be able to reach the **same** managed Neon Postgres as the app.
 Pointing it at a different (e.g. local) database makes rendering silently fail.
+
+`SIGNING_API_KEY` / `NEXT_PUBLIC_SIGNING_HOST` are needed in the dashboard because
+the `setup-signing-template` task (which creates the Documenso template) runs on
+the Trigger worker, not in this stack. See §12.
 
 ---
 
@@ -259,3 +265,128 @@ is optional — keep it only if you also want to reach the app on `localhost`.
   then bring the stack up again (same pattern for `/state/trigger.done`).
 - **First boot is slow.** Expected — Trigger remote build + `tb --cloud deploy`. `migrate`
   runs every boot but is idempotent.
+
+---
+
+## 12. Embedded signing (Documenso) — optional
+
+Papermark's **"Embedded signature flow"** agreements (the DocuSign-style flow:
+upload a PDF, place signature/name/date fields, recipient signs inline) are
+powered by **[Documenso](https://documenso.com)**, the open-source DocuSign
+alternative — Papermark embeds it, it does not sign PDFs itself. This stack runs
+a self-hosted Documenso so the whole flow is free.
+
+Skip this whole section if you don't need signing — Papermark runs fine without it.
+
+### 12.1 Why self-host Documenso
+
+Documenso's **embedded authoring** (placing fields without leaving Papermark) is
+a paid feature **on Documenso Cloud only** — the paywall is gated behind
+`IS_BILLING_ENABLED()`. Self-hosted Documenso runs with billing **off**, so both
+embedded authoring and signing work for free.
+
+### 12.2 Architecture
+
+```
+Papermark (app:3000) ──API (SIGNING_API_KEY)──▶ Documenso (documenso:3000)
+        │                                              │
+        └──────────── same cloudflared tunnel ─────────┘
+   papermark.<domain>  ──route──▶ app:3000
+   sign.<domain>       ──route──▶ documenso:3000
+```
+
+Two new Compose services:
+
+| service                | what it does                                                       | idempotency |
+| ---------------------- | ------------------------------------------------------------------ | ----------- |
+| `documenso-cert-init`  | generates a self-signed `.p12` signing cert into `documenso-certs` | file check  |
+| `documenso`            | Documenso app; own Neon DB + R2 bucket; migrates itself on boot     | —           |
+
+The `documenso` service uses an explicit `environment:` block (NOT `env_file:
+[.env]`) because Documenso reuses Papermark's `NEXT_PRIVATE_UPLOAD_*` /
+`NEXTAUTH_SECRET` variable **names** with different **values** — sharing `.env`
+would feed it Papermark's bucket and secret.
+
+### 12.3 Prerequisites (one-time)
+
+1. **R2 bucket** — create a private bucket named `documenso` (separate from
+   Papermark's). Reuses your existing R2 keys + endpoint.
+2. **Neon database** — create a **separate** `documenso` database in the *same*
+   Neon project (a separate DB, not the same one — Documenso's tables would
+   collide with Papermark's). Grab the **pooled** and **direct** URLs.
+3. **Cloudflare route** — in Zero Trust → your tunnel → **Published application
+   routes**, add `sign.<domain>` → Service `http://documenso:3000` (same tunnel,
+   second hostname). Auto-creates the DNS CNAME.
+
+### 12.4 Configure `.env`
+
+Fill the **Embedded signing (Documenso)** block:
+
+- `NEXT_PUBLIC_SIGNING_HOST=https://sign.<domain>` — build-time baked, so
+  changing it requires a `docker compose build app`.
+- `DOCUMENSO_DATABASE_URL` / `DOCUMENSO_DIRECT_DATABASE_URL` — the new Neon DB.
+- `DOCUMENSO_SMTP_FROM_ADDRESS` — on your Resend-verified domain (Documenso
+  reuses `RESEND_API_KEY` via Resend's native transport).
+- `DOCUMENSO_NEXTAUTH_SECRET`, `DOCUMENSO_ENCRYPTION_KEY`,
+  `DOCUMENSO_ENCRYPTION_SECONDARY_KEY` — `openssl rand -base64 32` each.
+- `DOCUMENSO_CERT_PASSPHRASE` — `openssl rand -hex 16` (the cert is generated for
+  you on first boot using this passphrase).
+- Leave `SIGNING_API_KEY` **blank for now** — it doesn't exist until Documenso boots.
+
+### 12.5 Boot (two-phase — the key gotcha)
+
+`SIGNING_API_KEY` is minted *inside* Documenso's UI after it's running, so this
+is a two-pass setup:
+
+```sh
+# Pass 1 — bring up Documenso (and rebuild for the baked NEXT_PUBLIC_SIGNING_HOST
+# + the tooling cert script).
+docker compose build
+docker compose up -d
+docker compose logs -f documenso          # wait for "Listening on port 3000"
+```
+
+1. Open `https://sign.<domain>`, create the first Documenso account, verify the
+   email (Resend). This account owns the API token.
+2. In Documenso → **Settings → API Tokens**, create a token. Copy it.
+3. Paste it into `.env` as `SIGNING_API_KEY=...` **and** into the **Trigger.dev
+   dashboard** (§8.2) — the `setup-signing-template` task runs on the worker.
+
+```sh
+# Pass 2 — restart the app so it picks up SIGNING_API_KEY (runtime var, no rebuild),
+# and redeploy the Trigger task env.
+docker compose up -d app
+```
+
+### 12.6 Enable the feature in Papermark (plan gate)
+
+Papermark gates "Create agreement" behind a Business/Datarooms/trial plan. On a
+fresh self-host your team is `free`; bump it directly in Neon:
+
+```sql
+-- find your team id
+SELECT id, name, plan FROM "Team";
+-- then
+UPDATE "Team" SET plan = 'business' WHERE id = '<your-team-id>';
+```
+
+Then: **Settings → Agreements → Create agreement → Embedded signature flow** →
+upload a PDF → place fields → attach the agreement to a share link.
+
+### 12.7 Troubleshooting
+
+- **`SIGNING_API_KEY environment variable is not set`** in app logs — you booted
+  the app before minting/pasting the key. Do §12.5 pass 2.
+- **"Embedded Authoring is not included in your plan"** from Documenso — you
+  pointed `NEXT_PUBLIC_SIGNING_HOST` at Documenso **Cloud**, not your self-host.
+  The free path requires the self-hosted instance (billing off).
+- **Field placement step fails / blank editor** — `NEXT_PUBLIC_SIGNING_HOST` was
+  empty at build time (baked the `app.documenso.com` default). Set it in `.env`
+  and `docker compose build app`.
+- **`sign.<domain>` returns 502** — `documenso` container isn't up yet, or the
+  cert-init failed. `docker compose logs documenso documenso-cert-init`.
+- **Documenso can't sign / cert error** — regenerate the cert: `docker compose
+  run --rm -v papermark_documenso-certs:/certs documenso-cert-init` after
+  removing the old file, or delete the `documenso-certs` volume and re-up.
+- **Documenso upload errors on R2** — the `documenso` bucket doesn't exist, or
+  `NEXT_PRIVATE_UPLOAD_FORCE_PATH_STYLE` got unset. Both are required for R2.
