@@ -59,11 +59,7 @@ export default async function handle(
 
     const sanitizedDomain = sanitizeDomain(rawDomain);
 
-    if (
-      !sanitizedDomain ||
-      !validDomainRegex.test(sanitizedDomain) ||
-      sanitizedDomain.includes("papermark")
-    ) {
+    if (!sanitizedDomain || !validDomainRegex.test(sanitizedDomain)) {
       return res.status(200).json({
         status: "invalid" as DomainValidationStatus,
       });
