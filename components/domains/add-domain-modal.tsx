@@ -139,12 +139,6 @@ export function AddDomainModal({
       return;
     }
 
-    if (debouncedDomain.includes("papermark")) {
-      setDomainStatus("invalid");
-      setStatusMessageOverride("Domain cannot contain 'papermark'.");
-      return;
-    }
-
     if (!validDomainRegex.test(debouncedDomain)) {
       setDomainStatus("idle");
       setStatusMessageOverride(null);
@@ -199,10 +193,6 @@ export function AddDomainModal({
     const normalizedDomain = sanitizeDomain(domainInput);
     if (!normalizedDomain || !validDomainRegex.test(normalizedDomain)) {
       return toast.error("Please enter a valid domain (e.g., example.com).");
-    }
-
-    if (normalizedDomain.includes("papermark")) {
-      return toast.error("Domain cannot contain 'papermark'.");
     }
 
     if (saveDisabled) {
