@@ -1,21 +1,16 @@
 #!/bin/sh
 # provision-tinybird.sh — deploy Tinybird datasources + endpoints to a
-# Tinybird *Forward* cloud workspace.
-# Idempotent via sentinel /state/tinybird.done (written only on SUCCESS).
+# Tinybird *Forward* cloud workspace. STATELESS one-shot setup step: run it
+# manually (it lives behind the `setup` Compose profile, not on every boot)
+# when you first stand up the stack or change lib/tinybird/.
+#   docker compose --profile setup run --rm provision-tinybird
+# Tinybird's cloud workspace persists independently of this server, so a plain
+# `docker compose up` (e.g. after moving to a new server) does NOT re-run it.
 # Runs on python:3.12-slim; installs the Forward CLI (NOT the Classic pip CLI),
 # then `tb --cloud deploy`.
 # TINYBIRD_TOKEN required. TINYBIRD_HOST optional (set for non-default regions,
 # e.g. us-east aws -> https://api.us-east.aws.tinybird.co).
-# Best-effort: a failed deploy prints a loud warning and exit 0 so `app` still
-# boots; the sentinel is NOT written on failure.
 set -eu
-
-SENTINEL="/state/tinybird.done"
-
-if [ -f "$SENTINEL" ]; then
-  echo "provision-tinybird: $SENTINEL present, skipping deploy."
-  exit 0
-fi
 
 : "${TINYBIRD_TOKEN:?TINYBIRD_TOKEN is required for tinybird deploy}"
 
@@ -23,11 +18,10 @@ warn_and_skip() {
   echo ""
   echo "############################################################"
   echo "# TINYBIRD NOT PROVISIONED — analytics disabled.           #"
-  echo "# The app will still boot. Fix the error above and re-run  #"
-  echo "# (delete $SENTINEL is not needed — it was not written).   #"
+  echo "# Fix the error above and re-run this provision step.       #"
   echo "############################################################"
   echo ""
-  exit 0
+  exit 1
 }
 
 echo "provision-tinybird: installing Tinybird Forward CLI..."
@@ -68,6 +62,4 @@ if ! tb --cloud $HOST_ARG --token "$TINYBIRD_TOKEN" deploy; then
   warn_and_skip
 fi
 
-mkdir -p "$(dirname "$SENTINEL")"
-touch "$SENTINEL"
-echo "provision-tinybird: done, wrote $SENTINEL."
+echo "provision-tinybird: done."

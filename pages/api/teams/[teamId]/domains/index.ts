@@ -102,13 +102,6 @@ export default async function handle(
         return res.status(422).json("Invalid domain");
       }
 
-      // Check if domain contains papermark
-      if (sanitizedDomain.toLowerCase().includes("papermark")) {
-        return res
-          .status(400)
-          .json({ message: "Domain cannot contain 'papermark'" });
-      }
-
       // Check if domain already exists
       const existingDomain = await prisma.domain.findFirst({
         where: {

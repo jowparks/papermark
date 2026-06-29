@@ -8,17 +8,30 @@ A single `docker compose up` boots a working Papermark that:
 - supports **email (magic-link) login** via **Resend**,
 - uses a managed **Neon** Postgres (no local DB container).
 
-Bootstrap runs through Compose-native one-shot init services, each idempotent:
+This stack is **stateless** — no named volumes, nothing persisted to local disk.
+Every secret lives in `.env`, so you move to a new server by copying `.env` and
+running `docker compose up`. A plain `docker compose up` runs:
 
-| service              | what it does                                  | idempotency        |
-| -------------------- | --------------------------------------------- | ------------------ |
-| `secrets-init`       | generates internal secret trio                | file check         |
-| `migrate`            | `prisma migrate deploy` against Neon          | safe every boot    |
-| `provision-tinybird` | `tb --cloud deploy` (Forward) datasources + endpoints | `state` sentinel |
-| `provision-trigger`  | `trigger.dev@4 deploy` to Trigger.dev Cloud   | `state` sentinel   |
-| `app`                | Next.js standalone runtime (`node server.js`) | healthcheck gated  |
+| service       | what it does                                  | idempotency       |
+| ------------- | --------------------------------------------- | ----------------- |
+| `migrate`     | `prisma migrate deploy` against Neon          | safe every boot   |
+| `app`         | Next.js standalone runtime (`node server.js`) | healthcheck gated |
+| `documenso`   | bundled e-signature service (optional, §12)   | —                 |
+| `cloudflared` | public HTTPS tunnel to `app` (optional, §10)  | —                 |
 
-`app` starts only after all four init services exit successfully.
+`app` starts after `migrate` completes.
+
+External-cloud provisioning (Tinybird datasources/endpoints, Trigger.dev tasks)
+is a **one-time setup step**, NOT part of `up` — those clouds keep their own state,
+so a server move never re-runs them. They live behind the `setup` profile:
+
+| setup step (run manually)                                    | what it does                                          |
+| ------------------------------------------------------------ | ----------------------------------------------------- |
+| `docker compose --profile setup run --rm provision-tinybird` | `tb --cloud deploy` (Forward) datasources + endpoints |
+| `docker compose --profile setup run --rm provision-trigger`  | `trigger.dev@4 deploy` to Trigger.dev Cloud           |
+
+Run both once on first setup (and again whenever you change `lib/tinybird/` or
+your Trigger.dev tasks).
 
 ---
 
@@ -103,20 +116,25 @@ Bootstrap runs through Compose-native one-shot init services, each idempotent:
 cp .env.docker.example .env
 ```
 
-Fill every line marked `✎`. Two of them — `INTERNAL_API_KEY` and
-`REVALIDATE_TOKEN` — you generate yourself:
+Fill every line marked `✎`. Several are secrets you generate yourself with
+`openssl rand -hex 32`:
 
 ```sh
-openssl rand -hex 32   # -> INTERNAL_API_KEY
-openssl rand -hex 32   # -> REVALIDATE_TOKEN
+openssl rand -hex 32   # -> INTERNAL_API_KEY   (ALSO paste into Trigger dashboard, §8.2)
+openssl rand -hex 32   # -> REVALIDATE_TOKEN   (ALSO paste into Trigger dashboard, §8.2)
+openssl rand -hex 32   # -> NEXTAUTH_SECRET
+openssl rand -hex 32   # -> NEXT_PRIVATE_DOCUMENT_PASSWORD_KEY
+openssl rand -hex 32   # -> NEXT_PRIVATE_VERIFICATION_SECRET
 ```
 
-Paste each into `.env` **and** into the Trigger.dev dashboard (§8.2). They must
-match on both sides or rendering callbacks return 401.
+`INTERNAL_API_KEY` / `REVALIDATE_TOKEN` must **match** between `.env` and the
+Trigger dashboard or rendering callbacks return 401.
 
-`NEXTAUTH_SECRET`, `NEXT_PRIVATE_DOCUMENT_PASSWORD_KEY`, and
-`NEXT_PRIVATE_VERIFICATION_SECRET` are generated automatically by `secrets-init`
-on first boot — leave them blank.
+The last three (the internal secret trio) sign sessions and encrypt stored data,
+so **keep them stable**. Because they live in `.env`, the same `.env` carried to a
+new server keeps existing data readable — in particular, changing
+`NEXT_PRIVATE_DOCUMENT_PASSWORD_KEY` makes already-saved document passwords
+permanently undecryptable.
 
 ---
 
@@ -169,12 +187,17 @@ the Trigger worker, not in this stack. See §12.
 # into the client bundle at build time).
 docker compose build
 
-# Boot. First run is slow: Trigger remote build + Tinybird Forward deploy. Later boots
-# are fast (sentinels in the `state` volume short-circuit them).
+# FIRST-TIME SETUP ONLY: provision the external clouds (slow: Trigger remote build
+# + Tinybird Forward deploy). Skip this when moving an already-provisioned stack to
+# a new server — the clouds keep their state.
+docker compose --profile setup run --rm provision-tinybird
+docker compose --profile setup run --rm provision-trigger
+
+# Boot (fast — migrate is idempotent, no provisioning runs here).
 docker compose up -d
 
-# Watch bootstrap progress.
-docker compose logs -f secrets-init migrate provision-tinybird provision-trigger
+# Watch progress.
+docker compose logs -f migrate app
 
 # App health.
 docker compose ps
@@ -260,11 +283,12 @@ is optional — keep it only if you also want to reach the app on `localhost`.
   active connections.
 - **`cloudflared` container crash-loops.** `TUNNEL_TOKEN` is blank or wrong in
   `.env`. Re-copy it with `cloudflared tunnel token <name>`.
-- **Re-run a provision step.** Delete its sentinel from the `state` volume:
-  `docker compose run --rm provision-tinybird sh -c 'rm -f /state/tinybird.done'`
-  then bring the stack up again (same pattern for `/state/trigger.done`).
-- **First boot is slow.** Expected — Trigger remote build + `tb --cloud deploy`. `migrate`
-  runs every boot but is idempotent.
+- **Re-run a provision step.** Just run it again — it always redeploys (there are
+  no sentinels): `docker compose --profile setup run --rm provision-tinybird`
+  (same for `provision-trigger`).
+- **First-time provisioning is slow.** Expected — Trigger remote build + `tb --cloud
+  deploy`. This runs only on the manual `--profile setup` steps, never on `up`.
+  `migrate` runs every boot but is idempotent.
 
 ---
 
@@ -295,12 +319,15 @@ Papermark (app:3000) ──API (SIGNING_API_KEY)──▶ Documenso (documenso:3
    sign.<domain>       ──route──▶ documenso:3000
 ```
 
-Two new Compose services:
+One new Compose service:
 
-| service                | what it does                                                       | idempotency |
-| ---------------------- | ------------------------------------------------------------------ | ----------- |
-| `documenso-cert-init`  | generates a self-signed `.p12` signing cert into `documenso-certs` | file check  |
-| `documenso`            | Documenso app; own Neon DB + R2 bucket; migrates itself on boot     | —           |
+| service     | what it does                                                   | idempotency |
+| ----------- | ------------------------------------------------------------- | ----------- |
+| `documenso` | Documenso app; own Neon DB + R2 bucket; migrates itself on boot | —           |
+
+The signing cert is passed inline as base64 (`DOCUMENSO_CERT_P12_BASE64` in
+`.env`, via `NEXT_PRIVATE_SIGNING_LOCAL_FILE_CONTENTS`) — no cert file or volume,
+so it travels with `.env`.
 
 The `documenso` service uses an explicit `environment:` block (NOT `env_file:
 [.env]`) because Documenso reuses Papermark's `NEXT_PRIVATE_UPLOAD_*` /
@@ -329,8 +356,17 @@ Fill the **Embedded signing (Documenso)** block:
   reuses `RESEND_API_KEY` via Resend's native transport).
 - `DOCUMENSO_NEXTAUTH_SECRET`, `DOCUMENSO_ENCRYPTION_KEY`,
   `DOCUMENSO_ENCRYPTION_SECONDARY_KEY` — `openssl rand -base64 32` each.
-- `DOCUMENSO_CERT_PASSPHRASE` — `openssl rand -hex 16` (the cert is generated for
-  you on first boot using this passphrase).
+- `DOCUMENSO_CERT_PASSPHRASE` — `openssl rand -hex 16`.
+- `DOCUMENSO_CERT_P12_BASE64` — the self-signed signing cert as a single base64
+  line. Generate it once with the passphrase above:
+  ```sh
+  openssl req -x509 -newkey rsa:2048 -nodes -days 3650 -keyout k.pem -out c.pem -subj "/CN=Documenso Self-Host"
+  openssl pkcs12 -export -legacy -inkey k.pem -in c.pem -passout pass:"$DOCUMENSO_CERT_PASSPHRASE" | base64 | tr -d '\n'
+  rm k.pem c.pem
+  ```
+  Paste the output into `DOCUMENSO_CERT_P12_BASE64=`. (Self-signed is fine for
+  self-host: it produces a valid, tamper-evident signature; it just isn't chained
+  to a public CA.)
 - Leave `SIGNING_API_KEY` **blank for now** — it doesn't exist until Documenso boots.
 
 ### 12.5 Boot (two-phase — the key gotcha)
@@ -339,8 +375,7 @@ Fill the **Embedded signing (Documenso)** block:
 is a two-pass setup:
 
 ```sh
-# Pass 1 — bring up Documenso (and rebuild for the baked NEXT_PUBLIC_SIGNING_HOST
-# + the tooling cert script).
+# Pass 1 — bring up Documenso (rebuild for the baked NEXT_PUBLIC_SIGNING_HOST).
 docker compose build
 docker compose up -d
 docker compose logs -f documenso          # wait for "Listening on port 3000"
@@ -383,10 +418,14 @@ upload a PDF → place fields → attach the agreement to a share link.
 - **Field placement step fails / blank editor** — `NEXT_PUBLIC_SIGNING_HOST` was
   empty at build time (baked the `app.documenso.com` default). Set it in `.env`
   and `docker compose build app`.
-- **`sign.<domain>` returns 502** — `documenso` container isn't up yet, or the
-  cert-init failed. `docker compose logs documenso documenso-cert-init`.
-- **Documenso can't sign / cert error** — regenerate the cert: `docker compose
-  run --rm -v papermark_documenso-certs:/certs documenso-cert-init` after
-  removing the old file, or delete the `documenso-certs` volume and re-up.
+- **`sign.<domain>` returns 502** — `documenso` container isn't up yet.
+  `docker compose logs documenso`.
+- **Boot log says `⚠️ Certificate not found`** — cosmetic. Documenso's startup
+  check only looks at the (unused) file path; the signer reads
+  `DOCUMENSO_CERT_P12_BASE64` from the env at sign time. Ignore it.
+- **Documenso can't sign / cert error** — regenerate the cert with the commands in
+  §12.4, replace `DOCUMENSO_CERT_P12_BASE64` in `.env`, and `docker compose up -d
+  documenso`. Ensure the value is a single line (no newlines) and
+  `DOCUMENSO_CERT_PASSPHRASE` matches.
 - **Documenso upload errors on R2** — the `documenso` bucket doesn't exist, or
   `NEXT_PRIVATE_UPLOAD_FORCE_PATH_STYLE` got unset. Both are required for R2.

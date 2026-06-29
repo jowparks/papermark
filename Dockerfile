@@ -109,12 +109,12 @@ COPY --from=build /app/node_modules/.prisma ./node_modules/.prisma
 COPY --from=build /app/node_modules/@prisma/client ./node_modules/@prisma/client
 COPY --from=build /app/node_modules/prisma ./node_modules/prisma
 
-# Schema (some runtime paths read it) + entrypoint script.
+# Schema (some runtime paths read it). All secrets now arrive via .env at
+# runtime, so the runner needs no helper scripts — start the server directly.
 COPY --from=build /app/prisma ./prisma
-COPY docker ./docker
 
 EXPOSE 3000
-ENTRYPOINT ["/bin/sh", "docker/app-entrypoint.sh"]
+ENTRYPOINT ["node", "server.js"]
 
 # ---------------------------------------------------------------------------
 # tooling: full source + full node_modules + prisma CLI + trigger CLI source.

@@ -18,6 +18,10 @@ export const getS3Client = (storageRegion?: string) => {
   return new S3Client({
     endpoint: config.endpoint || undefined,
     region: config.region,
+    // ponytail: SDK default WHEN_SUPPORTED adds x-amz-checksum-crc32 to
+    // presigned PUT URLs, which breaks R2's CORS preflight. WHEN_REQUIRED
+    // restores pre-3.729 behavior. Flip back if you move off R2 to real S3.
+    requestChecksumCalculation: "WHEN_REQUIRED",
     credentials: {
       accessKeyId: config.accessKeyId,
       secretAccessKey: config.secretAccessKey,
@@ -37,6 +41,10 @@ export const getS3ClientForTeam = async (teamId: string) => {
   return new S3Client({
     endpoint: config.endpoint || undefined,
     region: config.region,
+    // ponytail: SDK default WHEN_SUPPORTED adds x-amz-checksum-crc32 to
+    // presigned PUT URLs, which breaks R2's CORS preflight. WHEN_REQUIRED
+    // restores pre-3.729 behavior. Flip back if you move off R2 to real S3.
+    requestChecksumCalculation: "WHEN_REQUIRED",
     credentials: {
       accessKeyId: config.accessKeyId,
       secretAccessKey: config.secretAccessKey,
@@ -99,6 +107,10 @@ export const getTeamS3ClientAndConfig = async (teamId: string) => {
   const client = new S3Client({
     endpoint: config.endpoint || undefined,
     region: config.region,
+    // ponytail: SDK default WHEN_SUPPORTED adds x-amz-checksum-crc32 to
+    // presigned PUT URLs, which breaks R2's CORS preflight. WHEN_REQUIRED
+    // restores pre-3.729 behavior. Flip back if you move off R2 to real S3.
+    requestChecksumCalculation: "WHEN_REQUIRED",
     credentials: {
       accessKeyId: config.accessKeyId,
       secretAccessKey: config.secretAccessKey,

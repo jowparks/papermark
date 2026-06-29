@@ -1,24 +1,22 @@
-# Papermark self-host stack. `docker compose up` orchestrates one-time
-# bootstrap via Compose-native one-shot init services, each gated by
-# depends_on: { condition: service_completed_successfully } and made
-# idempotent (gen-secrets: file check; migrate: prisma deploy; tinybird /
-# trigger: sentinel files in the `state` volume).
+# Papermark self-host stack — STATELESS. `docker compose up` needs only this
+# file plus a populated .env: no named volumes, nothing written to disk that has
+# to survive. Move to another server by copying .env and running `docker compose up`.
+#
+# All persistent secrets live in .env: the internal secret trio
+# (NEXTAUTH_SECRET, NEXT_PRIVATE_DOCUMENT_PASSWORD_KEY, NEXT_PRIVATE_VERIFICATION_SECRET)
+# and the Documenso signing cert as base64 (DOCUMENSO_CERT_P12_BASE64).
+#
+# One-time external-cloud provisioning (Tinybird datasources/endpoints, Trigger.dev
+# tasks) lives behind the `setup` profile and is NOT part of `up` — those clouds
+# keep their state independently of this server, so a server move never re-runs them:
+#   docker compose --profile setup run --rm provision-tinybird
+#   docker compose --profile setup run --rm provision-trigger
 #
 # NO postgres service / pgdata volume — Postgres is managed (Neon).
 # NEXT_PUBLIC_* are baked into the client bundle at build time, so they are
 # passed to the `app` build via build.args (changing them => `docker compose build`).
 
 services:
-  # One-shot: generate internal secret trio into the `secrets` volume.
-  secrets-init:
-    build:
-      context: .
-      target: tooling
-    image: papermark-tooling
-    entrypoint: ["/bin/sh", "docker/gen-secrets.sh"]
-    volumes:
-      - secrets:/secrets
-
   # One-shot (every boot, idempotent): apply Prisma schema to managed Neon.
   migrate:
     build:
@@ -27,30 +25,28 @@ services:
     image: papermark-tooling
     entrypoint: ["/bin/sh", "docker/migrate-entrypoint.sh"]
     env_file: [.env]
-    depends_on:
-      secrets-init:
-        condition: service_completed_successfully
 
-  # One-shot (sentinel): push Tinybird datasources + endpoints.
+  # Setup-only (profile `setup`): push Tinybird datasources + endpoints. Manual;
+  # see docker/provision-tinybird.sh header. Not started by `docker compose up`.
   provision-tinybird:
+    profiles: ["setup"]
     image: python:3.12-slim
     entrypoint: ["/bin/sh", "/docker/provision-tinybird.sh"]
     env_file: [.env]
     volumes:
-      - state:/state
       - ./lib/tinybird:/work/lib/tinybird:ro
       - ./docker:/docker:ro
 
-  # One-shot (sentinel): deploy Trigger.dev tasks to Trigger.dev Cloud.
+  # Setup-only (profile `setup`): deploy Trigger.dev tasks to Trigger.dev Cloud.
+  # Manual; see docker/provision-trigger.sh header. Not started by `docker compose up`.
   provision-trigger:
+    profiles: ["setup"]
     build:
       context: .
       target: tooling
     image: papermark-tooling
     entrypoint: ["/bin/sh", "docker/provision-trigger.sh"]
     env_file: [.env]
-    volumes:
-      - state:/state
 
   # The Papermark web app (lean Next.js standalone runtime).
   app:
@@ -67,16 +63,8 @@ services:
     ports:
       - "3000:3000"
     env_file: [.env]
-    volumes:
-      - secrets:/secrets:ro
     depends_on:
-      secrets-init:
-        condition: service_completed_successfully
       migrate:
-        condition: service_completed_successfully
-      provision-tinybird:
-        condition: service_completed_successfully
-      provision-trigger:
         condition: service_completed_successfully
     healthcheck:
       # bookworm-slim has no wget/curl, but node is present in the runner image.
@@ -92,33 +80,16 @@ services:
       retries: 5
       start_period: 40s
 
-  # One-shot (idempotent, file check): generate a self-signed PKCS#12 signing
-  # cert for Documenso into the `documenso-certs` volume, keyed by
-  # DOCUMENSO_CERT_PASSPHRASE. Documenso refuses to seal PDFs without one.
-  documenso-cert-init:
-    build:
-      context: .
-      target: tooling
-    image: papermark-tooling
-    entrypoint: ["/bin/sh", "docker/gen-documenso-cert.sh"]
-    environment:
-      DOCUMENSO_CERT_PASSPHRASE: "${DOCUMENSO_CERT_PASSPHRASE}"
-    volumes:
-      - documenso-certs:/certs
-
   # Documenso — open-source e-signature provider powering Papermark's "Embedded
   # signature flow" agreements. Own Neon DB + R2 bucket; published at
   # https://sign.<domain> via the same cloudflared tunnel (route -> documenso:3000).
   # Explicit `environment` (NOT env_file: [.env]) because Documenso reuses
   # Papermark's NEXT_PRIVATE_UPLOAD_* / NEXTAUTH_SECRET names with DIFFERENT values.
+  # The signing cert is passed inline as base64 (DOCUMENSO_CERT_P12_BASE64 in .env)
+  # so there is no cert file or volume to carry between servers.
   documenso:
     image: documenso/documenso:latest
     restart: unless-stopped
-    depends_on:
-      documenso-cert-init:
-        condition: service_completed_successfully
-    volumes:
-      - documenso-certs:/certs:ro
     environment:
       PORT: "3000"
       NEXTAUTH_SECRET: "${DOCUMENSO_NEXTAUTH_SECRET}"
@@ -141,7 +112,7 @@ services:
       NEXT_PRIVATE_UPLOAD_SECRET_ACCESS_KEY: "${NEXT_PRIVATE_UPLOAD_SECRET_ACCESS_KEY}"
       NEXT_PRIVATE_UPLOAD_FORCE_PATH_STYLE: "true"
       NEXT_PRIVATE_SIGNING_TRANSPORT: "local"
-      NEXT_PRIVATE_SIGNING_LOCAL_FILE_PATH: "/certs/documenso-cert.p12"
+      NEXT_PRIVATE_SIGNING_LOCAL_FILE_CONTENTS: "${DOCUMENSO_CERT_P12_BASE64}"
       NEXT_PRIVATE_SIGNING_PASSPHRASE: "${DOCUMENSO_CERT_PASSPHRASE}"
 
   # Cloudflare Tunnel — publishes `app` at your public hostname with no exposed
@@ -156,8 +127,3 @@ services:
     depends_on:
       app:
         condition: service_healthy
-
-volumes:
-  secrets:
-  state:
-  documenso-certs:
