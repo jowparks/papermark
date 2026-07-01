@@ -6,6 +6,7 @@ import NextAuth, { type NextAuthOptions } from "next-auth";
 
 import { identifyUser, trackAnalytics } from "@/lib/analytics";
 import { authOptions } from "@/lib/auth/auth-options";
+import { isAllowedSignupEmail } from "@/lib/auth/signup-allowlist";
 import { dub } from "@/lib/dub";
 import { isBlacklistedEmail } from "@/lib/edge-config/blacklist";
 import prisma from "@/lib/prisma";
@@ -34,7 +35,11 @@ const getAuthOptions = (req: NextApiRequest): NextAuthOptions => {
     callbacks: {
       ...authOptions.callbacks,
       signIn: async ({ user, account, profile }) => {
-        if (!user.email || (await isBlacklistedEmail(user.email))) {
+        if (
+          !user.email ||
+          (await isBlacklistedEmail(user.email)) ||
+          !isAllowedSignupEmail(user.email)
+        ) {
           await identifyUser(user.email ?? user.id);
           await trackAnalytics({
             event: "User Sign In Attempted",
