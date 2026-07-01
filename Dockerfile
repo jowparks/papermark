@@ -126,6 +126,10 @@ ENTRYPOINT ["node", "server.js"]
 # tooling: full source + full node_modules + prisma CLI + trigger CLI source.
 # Used by `migrate` (prisma migrate deploy) and `provision-trigger`
 # (npx trigger.dev@4 deploy, remote builds — no docker socket needed).
+#
+# node_modules from `deps` NOT `build` (deliberate): neither consumer needs the
+# compiled Next app, so this severs tooling's link to the `build` stage — without
+# it, `npm run build` runs once per target instead of once total. Do not "fix".
 # ---------------------------------------------------------------------------
 FROM ${NODE_IMAGE} AS tooling
 WORKDIR /app
@@ -134,6 +138,6 @@ ENV NEXT_TELEMETRY_DISABLED=1
 RUN apt-get update \
   && apt-get install -y --no-install-recommends ca-certificates openssl \
   && rm -rf /var/lib/apt/lists/*
-COPY --from=build /app/node_modules ./node_modules
+COPY --from=deps /app/node_modules ./node_modules
 COPY . .
 ENTRYPOINT ["/bin/sh"]
