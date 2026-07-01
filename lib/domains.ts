@@ -4,7 +4,12 @@ import {
   DomainVerificationResponse,
 } from "@/lib/types";
 
+// ponytail: no Vercel token = self-host. Skip Vercel (it 403s → "Invalid" badge
+// + cron auto-deletes the domain); Host-header middleware does the routing instead.
+const isVercelManaged = () => !!process.env.AUTH_BEARER_TOKEN;
+
 export const addDomainToVercel = async (domain: string) => {
+  if (!isVercelManaged()) return {};
   return await fetch(
     `https://api.vercel.com/v10/projects/${process.env.PROJECT_ID_VERCEL}/domains?teamId=${process.env.TEAM_ID_VERCEL}`,
     {
@@ -63,6 +68,14 @@ export const removeDomainFromVercel = async (
 export const getDomainResponse = async (
   domain: string,
 ): Promise<DomainResponse & { error: { code: string; message: string } }> => {
+  if (!isVercelManaged()) {
+    return {
+      name: domain.toLowerCase(),
+      apexName: getApexDomain(`https://${domain}`),
+      verified: true,
+      verification: [],
+    } as DomainResponse & { error: { code: string; message: string } };
+  }
   return await fetch(
     `https://api.vercel.com/v9/projects/${process.env.PROJECT_ID_VERCEL}/domains/${domain.toLowerCase()}?teamId=${process.env.TEAM_ID_VERCEL}`,
     {
@@ -80,6 +93,9 @@ export const getDomainResponse = async (
 export const getConfigResponse = async (
   domain: string,
 ): Promise<DomainConfigResponse> => {
+  if (!isVercelManaged()) {
+    return { misconfigured: false, conflicts: [] };
+  }
   return await fetch(
     `https://api.vercel.com/v6/domains/${domain.toLowerCase()}/config?teamId=${process.env.TEAM_ID_VERCEL}`,
     {
@@ -95,6 +111,14 @@ export const getConfigResponse = async (
 export const verifyDomain = async (
   domain: string,
 ): Promise<DomainVerificationResponse> => {
+  if (!isVercelManaged()) {
+    return {
+      name: domain.toLowerCase(),
+      apexName: getApexDomain(`https://${domain}`),
+      projectId: "",
+      verified: true,
+    };
+  }
   return await fetch(
     `https://api.vercel.com/v9/projects/${process.env.PROJECT_ID_VERCEL}/domains/${domain.toLowerCase()}/verify?teamId=${process.env.TEAM_ID_VERCEL}`,
     {

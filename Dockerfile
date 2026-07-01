@@ -18,7 +18,9 @@ WORKDIR /app
 ENV NEXT_TELEMETRY_DISABLED=1
 COPY package.json package-lock.json ./
 COPY prisma ./prisma
-RUN npm ci
+# cache mount: persist npm's tarball cache across builds so a package-lock change
+# re-links from cache instead of re-downloading every dep.
+RUN --mount=type=cache,target=/root/.npm npm ci
 
 # ---------------------------------------------------------------------------
 # build: full source + `npm run build`. NEXT_PUBLIC_* are inlined into the
@@ -79,7 +81,11 @@ ENV NEXT_PRIVATE_UPLOAD_SECRET_ACCESS_KEY=builddummy
 
 COPY --from=deps /app/node_modules ./node_modules
 COPY . .
-RUN npm run build
+# cache mount: persist Next's incremental compile cache across builds. This is the
+# big one for source-change rebuilds — SWC/webpack only recompiles changed modules
+# instead of the whole app. The mount is build-only and never enters the image
+# (runner copies .next/standalone + .next/static, not .next/cache), so it's safe.
+RUN --mount=type=cache,target=/app/.next/cache npm run build
 
 # ---------------------------------------------------------------------------
 # runner: lean standalone runtime for the `app` service.
