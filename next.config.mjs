@@ -321,10 +321,12 @@ const nextConfig = {
   },
   experimental: {
     // self-host: cap static-generation worker fan-out at build time. Next forks
-    // one worker per CPU (build VM has 10) and each loads the full app
-    // (module-scope Prisma + SDK clients), OOM-killing an 8GB build host. This is
-    // a BUILD-ONLY knob — it has zero effect on the running server.
-    cpus: 2,
+    // one worker per CPU and each loads the full app (module-scope Prisma + SDK
+    // clients, ~1.5GB each). Tuned for this build host (32 threads / 251GB RAM):
+    // 8 workers ≈ 12GB, a rounding error here, and leaves cores for other Unraid
+    // workloads during a build. BUILD-ONLY knob — zero effect on the running server.
+    // ponytail: raise toward 16 if builds are still static-gen-bound; RAM is not the limit.
+    cpus: 8,
     // Rewrite barrel imports (e.g. `import { Icon } from "lucide-react"`) to
     // direct submodule imports at build time. Cuts dev boot, cold starts and
     // HMR for these large re-export packages without losing ergonomic imports.
